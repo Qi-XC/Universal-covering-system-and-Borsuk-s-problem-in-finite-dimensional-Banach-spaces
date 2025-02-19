@@ -1,0 +1,151 @@
+from sage.all import *
+from itertools import permutations, product
+
+# 1. Generate set of n-dimensional unimodular matrices
+def generate_matrices(n):
+    for signs in product([-1, 1], repeat=n):
+        for perm in permutations(range(n)):
+            mat = Matrix(ZZ, n)
+            for i in range(n):
+                mat[i, perm[i]] = signs[i]
+            yield mat
+
+TRANSFORM_MATRICES = list(generate_matrices(3))
+
+# 2. Compute translated vertices of a poly with respect to centroid
+def compute_translate(poly):
+    vertices = [v.vector() for v in poly.vertex_generator()]
+    centroid = sum(vertices) / len(vertices)
+    return [tuple(v - centroid) for v in vertices]
+
+# 3. Cut polyhedron along specified direction
+def directional_cutting(poly, direction, step_num):
+    vertices = [vector(v) for v in poly.vertices_list()]
+
+    x = max(vertices, key=lambda v: direction.dot_product(v))
+    y = max(vertices, key=lambda v: -direction.dot_product(v))
+    diff = x - y
+
+    print(f"\nStep {step_num} Direction {direction}:")
+    print(f"Extreme points x={x}, y={y}, difference vector x-y={diff}")
+
+    norm_x_minus_y = sum(abs(di) for di in diff)
+
+    if norm_x_minus_y > 1:
+        factor = (norm_x_minus_y - 1) / norm_x_minus_y
+        a = x - factor * diff / 2
+        b = y + factor * diff / 2
+
+        print(f"a(x,y) = {a}, b(x,y) = {b}")
+    else:
+        print("Warning: ||x - y||_1 <= 1, cannot compute a(x,y) and b(x,y).")
+
+    delta = (sum(abs(di) for di in diff) - 1)
+    ha_ineq = (direction.dot_product(x) - (delta/2),) + tuple(-d for d in direction)
+    hb_ineq = (-direction.dot_product(y) - (delta/2),) + tuple(d for d in direction)
+    Ha = Polyhedron(ieqs=[ha_ineq])
+    Hb = Polyhedron(ieqs=[hb_ineq])
+
+    return [
+        poly.intersection(Ha),
+        poly.intersection(Hb)
+    ], [f"{step_num}Ha", f"{step_num}Hb"]
+
+# 4. Remove duplicate convex bodies under unimodular transformations
+def deduplicate(polys_info):
+    unique = []
+    seen = set()
+
+    for poly, info in polys_info:
+        translated = frozenset(compute_translate(poly))
+        if translated in seen:
+            continue
+        unique.append((poly, info))
+        for L in TRANSFORM_MATRICES:
+            transformed = frozenset(tuple(L * vector(v)) for v in translated)
+            seen.add(transformed)
+    return unique
+
+# 5. Cutting process with 4 directional steps
+def round_cutting(input_polys, directions):
+    results = input_polys.copy()
+
+    for step in range(1, 5):
+        new_results = []
+        current_direction = directions[step - 1]
+
+        # Perform cutting in current direction
+        for poly, hist in results:
+            cut_polys, labels = directional_cutting(poly, current_direction, step)
+            for p, label in zip(cut_polys, labels):
+                new_results.append((p, f"{hist}→{label}"))
+
+        # Deduplication processing
+        results = deduplicate(new_results)
+
+        # Print current step results
+        print(f"\n=== Direction {step} Deduplicated Results ===")
+        for i, (p, info) in enumerate(results):
+            print(f"Convex Body {i + 1} ({info}):")
+            print("Vertices:", [tuple(v) for v in p.vertices_list()])
+
+    return results
+
+directions = [
+    vector([1, 1, 1]),
+    vector([1, 1, -1]),
+    vector([1, -1, 1]),
+    vector([-1, 1, 1])
+]
+
+poly1 = Polyhedron(vertices=[(-1/2, 0, 0),
+                             (-1/2, 1/4, 1/4),
+                             (0, -1/2, 0),
+                             (0, 0, -1/2),
+                             (0, 1/4, 3/4),
+                             (0, 3/4, 1/4),
+                             (1/4, -1/2, 1/4),
+                             (1/4, 0, 3/4),
+                             (1/4, 1/4, -1/2),
+                             (1/4, 3/4, 0),
+                             (3/4, 0, 1/4),
+                             (3/4, 1/4, 0)])
+poly2 = Polyhedron(vertices=[(-3/4, 0, 1/4),
+                             (0, -3/4, 1/4),
+                             (0, 0, -1/2),
+                             (0, 0, 1),
+                             (0, 3/4, 1/4),
+                             (3/4, 0, 1/4)])
+poly3 = Polyhedron(vertices=[(-1/4, 1/2, 1/4),
+                             (1/4, 1/4, -1/2),
+                             (1/2, -1/4, 1/4),
+                             (1/2, 1/4, -1/4),
+                             (1/4, 1/2, -1/4),
+                             (-1/4, -1/4, -1/2),
+                             (-1/2, -1/4, -1/4),
+                             (-1/4, -1/2, -1/4),
+                             (1/4, -1/4, 1/2),
+                             (1/4, -1/2, 1/4),
+                             (-1/2, 1/4, 1/4),
+                             (-1/4, 1/4, 1/2)])
+
+input_polys = [
+    (poly1, "D1"),
+    (poly2, "D2"),
+    (poly3, "D3")
+]
+
+
+final_results = round_cutting(input_polys, directions)
+
+def print_results(results, round_name):
+    print(f"\n=== {round_name} ===")
+    for i, (poly, info) in enumerate(results):
+        print(f"\nConvex Body {i + 1} Generation Path: {info}")
+        centroid = sum(vector(v) for v in poly.vertices_list()) / len(poly.vertices_list())
+        print("Centroid:", tuple(centroid))
+        print("Vertices Coordinates:")
+        for v in poly.vertices_list():
+            print(tuple(vector(v)))
+
+print_results(final_results, "Final Deduplicated Results")
